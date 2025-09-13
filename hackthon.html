@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeSprint - Code Learning Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* A slightly more modern font for the UI */
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        
+        /* Custom scrollbar for a better look in the editor and output panels */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        html.light ::-webkit-scrollbar-track { background: #f3f4f6; }
+        html.light ::-webkit-scrollbar-thumb { background: #d1d5db; }
+        html.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+        /* Style for the code editor textarea */
+        #code-editor {
+            font-family: 'Fira Code', 'Courier New', monospace;
+            tab-size: 4;
+            -moz-tab-size: 4;
+            -o-tab-size: 4;
+        }
+
+        /* Simple fade-in animation for page loads */
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-300">
+
+    <div id="app">
+        </div>
+
+    <script type="module">
+        // --- STATE MANAGEMENT ---
+        let state = {
+            page: 'dashboard', // dashboard, exercises, leaderboard, editor
+            selectedExerciseId: null,
+            theme: 'dark',
+            showSuccessModal: false,
+            isMobileMenuOpen: false,
+            exerciseFilters: {
+                lang: 'all',
+                difficulty: 'all',
+            },
+            userProgress: {
+                completedExercises: [],
+                streak: 1,
+                badges: [],
+                lastCompleted: null
+            }
+        };
+
+        // --- MOCK DATA & SIMULATION ---
+        const exercises = [
+            { id: 'py-1', lang: 'python', difficulty: 'Beginner', title: 'Hello, World!', description: 'Print the exact string "Hello, World!" to the console.', starterCode: 'print("Hello, World!")' },
+            { id: 'py-2', lang: 'python', difficulty: 'Beginner', title: 'Simple Arithmetic', description: 'Create a function `add(a, b)` that returns the sum of two numbers.', starterCode: 'def add(a, b):\n  # Your code here\n  return a + b' },
+            { id: 'py-3', lang: 'python', difficulty: 'Intermediate', title: 'Even or Odd', description: 'Create a function `is_even(n)` that returns `True` if a number is even, `False` otherwise.', starterCode: 'def is_even(n):\n  # Your code here\n  return n % 2 == 0' },
+            { id: 'js-1', lang: 'javascript', difficulty: 'Beginner', title: 'Hello, World!', description: 'Log the exact string "Hello, World!" to the console.', starterCode: 'console.log("Hello, World!");' },
+            { id: 'js-2', lang: 'javascript', difficulty: 'Beginner', title: 'Simple Arithmetic', description: 'Create a function `add(a, b)` that returns the sum of two numbers.', starterCode: 'function add(a, b) {\n  // Your code here\n  return a + b;\n}' },
+            { id: 'js-3', lang: 'javascript', difficulty: 'Intermediate', title: 'Find Max Number', description: 'Create a function `findMax(arr)` that returns the largest number in an array.', starterCode: 'function findMax(arr) {\n  // Your code here\n  return Math.max(...arr);\n}' },
+            { id: 'java-1', lang: 'java', difficulty: 'Beginner', title: 'Hello, World!', description: 'Print the exact string "Hello, World!" to the console.', starterCode: 'public class Main {\n  public static void main(String[] args) {\n    System.out.println("Hello, World!");\n  }\n}' },
+            { id: 'java-2', lang: 'java', difficulty: 'Intermediate', title: 'Factorial', description: 'Create a method `factorial(n)` that computes the factorial of a non-negative integer.', starterCode: 'public class Main {\n  public static int factorial(int n) {\n    // Your code here\n    if (n == 0) return 1;\n    return n * factorial(n - 1);\n  }\n}' },
+        ];
+        
+        const errorExplanations = {
+            'python-indentation': { hint: "Python uses spacing to define code blocks. It looks like your indentation is off.", ai_explanation: "In Python, unlike many other languages that use curly braces `{}`, whitespace is syntactically significant. An `IndentationError` occurs when a line is not indented correctly...", suggestedFix: 'def add(a, b):\n  return a + b' },
+            'js-syntax': { hint: "Check for missing parentheses, brackets, or semicolons.", ai_explanation: "A `SyntaxError` in JavaScript means the interpreter couldn't understand your code. This is often caused by typos...", suggestedFix: 'function add(a, b) {\n  return a + b;\n}' },
+            'java-semicolon': { hint: "It seems you've missed a semicolon ';' at the end of a statement.", ai_explanation: "In Java, every statement must end with a semicolon (`;`). This tells the compiler where one statement ends and the next begins...", suggestedFix: 'public class Main {\n  public static void main(String[] args) {\n    System.out.println("Hello, World!");\n  }\n}' },
+            'wrong-answer': { hint: "Your code runs, but it's not producing the right output for the test cases.", ai_explanation: "A logical error means your code is syntactically correct but the logic is flawed, leading to incorrect results...", suggestedFix: '/* AI cannot determine a logical fix. Try using print statements to debug your logic. */' }
+        };
+
+        const badgeLibrary = [
+            { id: 'First Steps', name: 'First Steps', description: 'Complete your first exercise', icon: '👣' },
+            { id: 'Python Novice', name: 'Python Novice', description: 'Complete 2 Python exercises', icon: '🐍' },
+            { id: 'JS Starter', name: 'JS Starter', description: 'Complete 2 JavaScript exercises', icon: '⚡' },
+            { id: 'Java Apprentice', name: 'Java Apprentice', description: 'Complete 2 Java exercises', icon: '☕' },
+        ];
+
+        const mockLeaderboard = [
+            { name: 'Alice', score: 1250, avatar: '👩‍💻' }, { name: 'Bob', score: 1100, avatar: '👨‍🚀' }, { name: 'Charlie', score: 980, avatar: '👨‍🎨' }, { name: 'Diana', score: 850, avatar: '👩‍🔬' }, { name: 'Ethan', score: 720, avatar: '👨‍🎤' },
+        ];
+
+        // --- ICONS (Functions returning SVG strings) ---
+        const SunIcon = () => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg>`;
+        const MoonIcon = () => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>`;
+        const CodeIcon = (lang) => {
+            const colors = { python: 'text-blue-400', javascript: 'text-yellow-400', java: 'text-red-400' };
+            return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 ${colors[lang] || 'text-gray-400'}"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`;
+        };
+        const CheckCircleIcon = () => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5 text-green-500"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>`;
+        const TrophyIcon = () => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6 text-yellow-500"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"></path></svg>`;
+        const StreakIcon = () => `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-orange-500" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.395 2.553a1 1 0 00-1.45.385c-.345.675-.278 1.443.182 2.023L11.5 6.75a1 1 0 00-2 0L9.818 5.038c.46-.58.527-1.348.182-2.023a1 1 0 00-1.45-.385c-.495.255-.786.787-.786 1.352v3.234a1 1 0 00.22 1.487l1.732 1.732a1 1 0 001.414 0l1.732-1.732a1 1 0 00.22-1.487V3.905c0-.565-.291-1.097-.786-1.352z" clip-rule="evenodd" /><path d="M4.5 9.5a1 1 0 011-1h9a1 1 0 110 2h-9a1 1 0 01-1-1z" /></svg>`;
+
+        // --- UTILS ---
+        const getFromStorage = (key, defaultValue) => {
+            const item = localStorage.getItem(key);
+            return item ? JSON.parse(item) : defaultValue;
+        };
+        const saveToStorage = (key, value) => {
+            localStorage.setItem(key, JSON.stringify(value));
+        };
+
+        const showConfetti = () => {
+            for (let i = 0; i < 100; i++) {
+                const confetti = document.createElement('div');
+                confetti.textContent = ['🎉', '🎊', '🎈', '✨', '⭐'][Math.floor(Math.random() * 5)];
+                confetti.style.position = 'fixed';
+                confetti.style.left = `${Math.random() * 100}vw`;
+                confetti.style.top = `${Math.random() * -100}vh`;
+                confetti.style.fontSize = `${Math.random() * 2 + 1}rem`;
+                confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+                confetti.style.transition = 'top 2s ease-out, opacity 2s ease-out, transform 2s ease-out';
+                confetti.style.zIndex = '100';
+                document.body.appendChild(confetti);
+
+                setTimeout(() => {
+                    confetti.style.top = '110vh';
+                    confetti.style.opacity = '0';
+                    confetti.style.transform = `rotate(${Math.random() * 360 + 360}deg)`;
+                }, 100);
+
+                setTimeout(() => confetti.remove(), 2100);
+            }
+        };
+        
+        // --- EVENT HANDLERS (must be on window object to be called from HTML) ---
+        window.navigate = (pageName) => {
+            state.page = pageName;
+            state.isMobileMenuOpen = false; // Close menu on navigation
+            render();
+        };
+
+        window.selectExercise = (exerciseId) => {
+            state.selectedExerciseId = exerciseId;
+            state.page = 'editor';
+            render();
+        };
+        
+        window.toggleTheme = () => {
+            state.theme = state.theme === 'dark' ? 'light' : 'dark';
+            saveToStorage('code-sprint-theme', state.theme);
+            render();
+        };
+
+        window.toggleMobileMenu = () => {
+            state.isMobileMenuOpen = !state.isMobileMenuOpen;
+            render();
+        }
+
+        window.runCode = async () => {
+            const editorEl = document.getElementById('code-editor');
+            const outputEl = document.getElementById('output-panel');
+            const errorEl = document.getElementById('error-panel');
+            const runBtn = document.getElementById('run-btn');
+
+            if (!editorEl || !outputEl || !errorEl || !runBtn) return;
+
+            runBtn.disabled = true;
+            runBtn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Running...`;
+            outputEl.textContent = 'Running...';
+            outputEl.parentElement.className = 'flex-grow p-4 rounded-md overflow-auto text-sm font-mono bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200';
+            errorEl.innerHTML = '';
+
+            const code = editorEl.value;
+            const exercise = exercises.find(e => e.id === state.selectedExerciseId);
+
+            // Simulate API call
+            const result = await new Promise(resolve => {
+                setTimeout(() => {
+                    if (exercise.id === 'py-2' && !code.includes('  return a + b')) resolve({ status: 'error', type: 'python-indentation', output: 'IndentationError: expected an indented block' });
+                    else if (exercise.id === 'js-2' && !code.includes('return a + b;')) resolve({ status: 'error', type: 'js-syntax', output: 'SyntaxError: Unexpected token' });
+                    else if (exercise.id === 'java-1' && !code.includes('System.out.println("Hello, World!");')) resolve({ status: 'error', type: 'java-semicolon', output: 'Error: \';\' expected' });
+                    else if (code.replace(/\s/g, '').includes(exercise.starterCode.replace(/\s/g, ''))) resolve({ status: 'success', output: '✅ All test cases passed!' });
+                    else resolve({ status: 'error', type: 'wrong-answer', output: '❌ Failed on test case 1: Expected different output.' });
+                }, 800);
+            });
+
+            outputEl.textContent = result.output;
+            if (result.status === 'success') {
+                handleExerciseComplete(exercise.id);
+            } else {
+                const error = errorExplanations[result.type];
+                outputEl.parentElement.className = 'flex-grow p-4 rounded-md overflow-auto text-sm font-mono bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200';
+                errorEl.innerHTML = `
+                    <div class="mt-4 p-4 bg-blue-100 dark:bg-blue-900/30 rounded-md text-blue-800 dark:text-blue-200">
+                          <p class="font-bold">💡 Hint: ${error.hint}</p>
+                          <div id="ai-explanation" class="hidden mt-2 text-sm">${error.ai_explanation}</div>
+                          <div class="flex space-x-4 mt-3">
+                              <button onclick="document.getElementById('ai-explanation').classList.toggle('hidden'); this.textContent = this.textContent.includes('Show') ? 'Hide AI Explanation' : 'Show AI Explanation'" class="text-sm font-semibold text-blue-600 dark:text-blue-300 hover:underline">
+                                  Show AI Explanation
+                              </button>
+                              <button onclick="applyAiFix('${result.type}')" class="text-sm font-semibold text-green-600 dark:text-green-400 hover:underline">
+                                  Apply AI Fix
+                              </button>
+                          </div>
+                    </div>`;
+            }
+
+            runBtn.disabled = false;
+            runBtn.innerHTML = 'Run & Submit';
+        };
+
+        window.applyAiFix = (errorType) => {
+            const editorEl = document.getElementById('code-editor');
+            const fix = errorExplanations[errorType]?.suggestedFix;
+            if (editorEl && fix && !fix.includes('AI cannot determine')) {
+                editorEl.value = fix;
+            }
+        };
+
+        window.resetCode = () => {
+            if (confirm("Are you sure you want to reset your code to the original template?")) {
+                const editorEl = document.getElementById('code-editor');
+                const exercise = exercises.find(e => e.id === state.selectedExerciseId);
+                if (editorEl && exercise) {
+                    editorEl.value = exercise.starterCode;
+                }
+            }
+        };
+
+        window.setFilter = (type, value) => {
+            state.exerciseFilters[type] = value;
+            render();
+        };
+
+        window.closeModalAndContinue = (next = false) => {
+            state.showSuccessModal = false;
+            if (next) {
+                const currentIdx = exercises.findIndex(e => e.id === state.selectedExerciseId);
+                const nextExercise = exercises[currentIdx + 1];
+                if (nextExercise) {
+                    selectExercise(nextExercise.id);
+                } else {
+                    navigate('exercises'); // No more exercises, go back to list
+                }
+            } else {
+                render();
+            }
+        };
+        
+        const handleExerciseComplete = (exerciseId) => {
+            if (!state.userProgress.completedExercises.includes(exerciseId)) {
+                const today = new Date().toDateString();
+                const newStreak = state.userProgress.lastCompleted === today ? state.userProgress.streak : state.userProgress.streak + 1;
+                const newCompleted = [...state.userProgress.completedExercises, exerciseId];
+                
+                const newBadges = [...state.userProgress.badges];
+                // Check for new badges
+                if (newCompleted.length >= 1 && !newBadges.includes('First Steps')) newBadges.push('First Steps');
+                if (newCompleted.filter(id => id.startsWith('py')).length >= 2 && !newBadges.includes('Python Novice')) newBadges.push('Python Novice');
+                if (newCompleted.filter(id => id.startsWith('js')).length >= 2 && !newBadges.includes('JS Starter')) newBadges.push('JS Starter');
+                if (newCompleted.filter(id => id.startsWith('java')).length >= 2 && !newBadges.includes('Java Apprentice')) newBadges.push('Java Apprentice');
+
+                state.userProgress = {
+                    completedExercises: newCompleted,
+                    streak: newStreak,
+                    badges: newBadges,
+                    lastCompleted: today
+                };
+                saveToStorage('code-sprint-progress', state.userProgress);
+            }
+            state.showSuccessModal = true;
+            showConfetti();
+            render(); // Re-render to show the modal
+        };
+
+
+        // --- UI COMPONENTS (Functions returning HTML strings) ---
+
+        const HeaderComponent = () => `
+            <header class="bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm shadow-md sticky top-0 z-40">
+                <nav class="container mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="flex items-center justify-between h-16">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 cursor-pointer" onclick="navigate('dashboard')">
+                                <span class="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400">🚀 CodeSprint</span>
+                            </div>
+                            <div class="hidden md:block">
+                                <div class="ml-10 flex items-baseline space-x-1">
+                                    <button onclick="navigate('dashboard')" class="${state.page === 'dashboard' ? 'bg-gray-200 dark:bg-gray-700' : ''} text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 px-3 py-2 rounded-md text-sm font-medium">Dashboard</button>
+                                    <button onclick="navigate('exercises')" class="${state.page === 'exercises' ? 'bg-gray-200 dark:bg-gray-700' : ''} text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 px-3 py-2 rounded-md text-sm font-medium">Exercises</button>
+                                    <button onclick="navigate('leaderboard')" class="${state.page === 'leaderboard' ? 'bg-gray-200 dark:bg-gray-700' : ''} text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 px-3 py-2 rounded-md text-sm font-medium">Leaderboard</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hidden md:flex items-center space-x-4">
+                             <button onclick="toggleTheme()" class="p-2 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
+                                ${state.theme === 'dark' ? SunIcon() : MoonIcon()}
+                            </button>
+                            <button class="px-4 py-2 text-sm font-semibold rounded-md text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-gray-800">Log In</button>
+                            <button class="px-4 py-2 text-sm font-semibold rounded-md text-white bg-indigo-600 hover:bg-indigo-700">Sign Up</button>
+                        </div>
+                        <div class="-mr-2 flex md:hidden">
+                            <button onclick="toggleMobileMenu()" type="button" class="bg-gray-200 dark:bg-gray-800 inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-white" aria-controls="mobile-menu" aria-expanded="false">
+                                <span class="sr-only">Open main menu</span>
+                                <svg class="${state.isMobileMenuOpen ? 'hidden' : 'block'} h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
+                                <svg class="${state.isMobileMenuOpen ? 'block' : 'hidden'} h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                        </div>
+                    </div>
+                </nav>
+                <div class="${state.isMobileMenuOpen ? 'block' : 'hidden'} md:hidden" id="mobile-menu">
+                    <div class="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+                        <button onclick="navigate('dashboard')" class="text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 block px-3 py-2 rounded-md text-base font-medium w-full text-left">Dashboard</button>
+                        <button onclick="navigate('exercises')" class="text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 block px-3 py-2 rounded-md text-base font-medium w-full text-left">Exercises</button>
+                        <button onclick="navigate('leaderboard')" class="text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 block px-3 py-2 rounded-md text-base font-medium w-full text-left">Leaderboard</button>
+                        <hr class="border-gray-200 dark:border-gray-700 my-2">
+                        <div class="flex items-center justify-between px-3 py-2">
+                             <span class="font-medium">Switch Theme</span>
+                             <button onclick="toggleTheme()" class="p-2 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200">${state.theme === 'dark' ? SunIcon() : MoonIcon()}</button>
+                        </div>
+                    </div>
+                </div>
+            </header>`;
+        
+        const ProgressBarComponent = ({ value, label, colorClass }) => `
+            <div>
+                <div class="flex justify-between mb-1">
+                    <span class="text-base font-medium text-gray-700 dark:text-gray-300">${label}</span>
+                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${value}%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                    <div class="${colorClass} h-2.5 rounded-full transition-all duration-500" style="width: ${value}%"></div>
+                </div>
+            </div>`;
+
+        const DashboardComponent = () => {
+            const totalExercisesByLang = exercises.reduce((acc, ex) => ({ ...acc, [ex.lang]: (acc[ex.lang] || 0) + 1 }), {});
+            const completedByLang = state.userProgress.completedExercises.reduce((acc, exId) => {
+                const langMap = { 'py': 'python', 'js': 'javascript', 'java': 'java' };
+                const lang = langMap[exId.split('-')[0]];
+                if (lang) acc[lang] = (acc[lang] || 0) + 1;
+                return acc;
+            }, {});
+            const progressData = {
+                python: Math.round(((completedByLang.python || 0) / totalExercisesByLang.python) * 100),
+                javascript: Math.round(((completedByLang.javascript || 0) / totalExercisesByLang.javascript) * 100),
+                java: Math.round(((completedByLang.java || 0) / totalExercisesByLang.java) * 100)
+            };
+            
+            window.startChallenge = (lang) => {
+                const firstUnsolved = exercises.find(ex => ex.lang === lang && !state.userProgress.completedExercises.includes(ex.id));
+                selectExercise(firstUnsolved ? firstUnsolved.id : exercises.find(e => e.lang === lang).id);
+            }
+            
+            return `
+                <div class="space-y-8">
+                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Welcome back, Coder!</h1>
+                        <p class="mt-2 text-gray-600 dark:text-gray-400">Continue your coding journey and become a master.</p>
+                    </div>
+                    <div class="grid md:grid-cols-3 gap-6">
+                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md flex items-center justify-between">
+                            <div><p class="text-sm font-medium text-gray-500 dark:text-gray-400">Completed</p><p class="text-3xl font-bold text-gray-900 dark:text-white">${state.userProgress.completedExercises.length} <span class="text-lg font-normal">/ ${exercises.length}</span></p></div>
+                            <div class="bg-green-100 dark:bg-green-900/50 p-3 rounded-full">${CheckCircleIcon()}</div>
+                        </div>
+                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md flex items-center justify-between">
+                            <div><p class="text-sm font-medium text-gray-500 dark:text-gray-400">Current Streak</p><p class="text-3xl font-bold text-gray-900 dark:text-white flex items-center">${StreakIcon()} <span class="ml-2">${state.userProgress.streak} Days</span></p></div>
+                        </div>
+                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md flex items-center justify-between">
+                            <div><p class="text-sm font-medium text-gray-500 dark:text-gray-400">Badges Earned</p><p class="text-3xl font-bold text-gray-900 dark:text-white">${TrophyIcon()} <span class="ml-2">${state.userProgress.badges.length}</span></p></div>
+                        </div>
+                    </div>
+                    <div class="grid lg:grid-cols-2 gap-8">
+                        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                            <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">Your Progress</h2>
+                            <div class="space-y-4">
+                                ${ProgressBarComponent({ label: "Python", value: progressData.python, colorClass: "bg-blue-600" })}
+                                ${ProgressBarComponent({ label: "JavaScript", value: progressData.javascript, colorClass: "bg-yellow-500" })}
+                                ${ProgressBarComponent({ label: "Java", value: progressData.java, colorClass: "bg-red-600" })}
+                            </div>
+                        </div>
+                         <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                            <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">Your Badges</h2>
+                            <div class="flex flex-wrap gap-4">
+                                ${badgeLibrary.map(badge => `
+                                    <div class="flex flex-col items-center p-2 rounded-md ${state.userProgress.badges.includes(badge.id) ? 'bg-green-100 dark:bg-green-900/50' : 'bg-gray-100 dark:bg-gray-700/50 opacity-50'}" title="${badge.description}">
+                                        <span class="text-3xl">${badge.icon}</span>
+                                        <span class="text-xs font-semibold mt-1 text-center text-gray-700 dark:text-gray-300">${badge.name}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                        <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">Start a New Challenge</h2>
+                        <div class="grid md:grid-cols-3 gap-4">
+                            <button onclick="startChallenge('python')" class="p-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-semibold">Start Python</button>
+                            <button onclick="startChallenge('javascript')" class="p-4 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors font-semibold">Start JavaScript</button>
+                            <button onclick="startChallenge('java')" class="p-4 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-semibold">Start Java</button>
+                        </div>
+                    </div>
+                </div>`;
+        };
+
+        const ExerciseListComponent = () => {
+              const { lang: langFilter, difficulty: difficultyFilter } = state.exerciseFilters;
+              const filteredExercises = exercises.filter(ex => 
+                  (langFilter === 'all' || ex.lang === langFilter) &&
+                  (difficultyFilter === 'all' || ex.difficulty === difficultyFilter)
+              );
+              const difficultyPillClasses = {
+                  'Beginner': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
+                  'Intermediate': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
+              };
+              return `
+                  <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                      <h1 class="text-3xl font-bold mb-2 text-gray-900 dark:text-white">Practice Exercises</h1>
+                      <p class="text-gray-600 dark:text-gray-400 mb-6">Select a challenge to start coding.</p>
+
+                      <div class="flex flex-wrap gap-x-6 gap-y-4 mb-6">
+                          <div>
+                              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Language</label>
+                              <div class="flex space-x-2">
+                                  <button onclick="setFilter('lang', 'all')" class="px-3 py-1.5 rounded-md text-sm font-medium ${langFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}">All</button>
+                                  <button onclick="setFilter('lang', 'python')" class="px-3 py-1.5 rounded-md text-sm font-medium ${langFilter === 'python' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}">Python</button>
+                                  <button onclick="setFilter('lang', 'javascript')" class="px-3 py-1.5 rounded-md text-sm font-medium ${langFilter === 'javascript' ? 'bg-yellow-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}">JavaScript</button>
+                                  <button onclick="setFilter('lang', 'java')" class="px-3 py-1.5 rounded-md text-sm font-medium ${langFilter === 'java' ? 'bg-red-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}">Java</button>
+                              </div>
+                          </div>
+                          <div>
+                              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Difficulty</label>
+                              <div class="flex space-x-2">
+                                  <button onclick="setFilter('difficulty', 'all')" class="px-3 py-1.5 rounded-md text-sm font-medium ${difficultyFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}">All</button>
+                                  <button onclick="setFilter('difficulty', 'Beginner')" class="px-3 py-1.5 rounded-md text-sm font-medium ${difficultyFilter === 'Beginner' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}">Beginner</button>
+                                  <button onclick="setFilter('difficulty', 'Intermediate')" class="px-3 py-1.5 rounded-md text-sm font-medium ${difficultyFilter === 'Intermediate' ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}">Intermediate</button>
+                              </div>
+                          </div>
+                      </div>
+
+                      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          ${filteredExercises.length > 0 ? filteredExercises.map(ex => `
+                              <div onclick="selectExercise('${ex.id}')" class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg cursor-pointer hover:shadow-lg hover:scale-[1.02] transition-all duration-200 flex flex-col justify-between relative border border-transparent dark:hover:border-indigo-500 hover:border-indigo-300">
+                                  ${state.userProgress.completedExercises.includes(ex.id) ? `<div class="absolute top-2 right-2 text-green-500" title="Completed">${CheckCircleIcon()}</div>` : ''}
+                                  <div>
+                                      <div class="flex items-center mb-2">
+                                          ${CodeIcon(ex.lang)}
+                                          <h3 class="ml-2 text-lg font-bold text-gray-900 dark:text-white">${ex.title}</h3>
+                                      </div>
+                                      <p class="text-sm text-gray-600 dark:text-gray-400 h-10">${ex.description.substring(0, 70)}${ex.description.length > 70 ? '...' : ''}</p>
+                                  </div>
+                                  <div class="mt-4 flex items-center justify-between">
+                                      <span class="text-xs font-semibold px-2 py-1 rounded-full ${difficultyPillClasses[ex.difficulty] || 'bg-gray-200 text-gray-800'}">${ex.difficulty}</span>
+                                  </div>
+                              </div>
+                          `).join('') : `<p class="md:col-span-2 lg:col-span-3 text-center text-gray-500 dark:text-gray-400 py-8">No exercises match your filters.</p>`}
+                      </div>
+                  </div>`;
+        };
+        
+        const LeaderboardComponent = () => `
+            <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+                <h1 class="text-2xl font-bold mb-4 text-gray-900 dark:text-white">🏆 Leaderboard</h1>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                        <thead class="bg-gray-50 dark:bg-gray-700">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Rank</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Player</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Score</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                        ${mockLeaderboard.map((player, index) => `
+                            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">${index + 1}</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
+                                    <div class="flex items-center">
+                                        <div class="text-xl mr-3">${player.avatar}</div>
+                                        <span>${player.name}</span>
+                                    </div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300 font-semibold text-right">${player.score}</td>
+                            </tr>
+                        `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+
+        const EditorComponent = () => {
+            const exercise = exercises.find(e => e.id === state.selectedExerciseId);
+            if (!exercise) return `<p>Exercise not found.</p>`;
+
+            return `
+                <div class="flex flex-col h-[calc(100vh-12rem)] gap-4">
+                    <div class="flex-shrink-0 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md">
+                        <h1 class="text-2xl font-bold mb-1">${exercise.title}</h1>
+                        <p class="text-gray-600 dark:text-gray-400 mb-4">${exercise.description}</p>
+                         <div class="flex items-center space-x-2">
+                             <button id="run-btn" onclick="runCode()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50">Run & Submit</button>
+                             <button onclick="resetCode()" class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600">Reset</button>
+                             <button onclick="navigate('exercises')" class="px-4 py-2 text-sm font-medium rounded-md text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-gray-800">Back to List</button>
+                        </div>
+                    </div>
+
+                    <div class="flex-grow flex flex-col md:flex-row gap-4 min-h-0">
+                        <div class="flex-1 flex flex-col bg-gray-800 rounded-lg shadow-md overflow-hidden">
+                           <textarea id="code-editor" class="w-full h-full p-4 bg-transparent text-gray-200 resize-none focus:outline-none" spellcheck="false">${exercise.starterCode}</textarea>
+                        </div>
+                        
+                        <div class="flex-1 flex flex-col bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md overflow-hidden">
+                            <h3 class="text-lg font-semibold mb-2 flex-shrink-0">Output</h3>
+                            <div class="flex-grow p-4 rounded-md overflow-auto text-sm font-mono bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+                                <pre id="output-panel">Click 'Run & Submit' to see the output.</pre>
+                            </div>
+                            <div id="error-panel"></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        const SuccessModalComponent = () => {
+            if (!state.showSuccessModal) return '';
+            const exercise = exercises.find(e => e.id === state.selectedExerciseId);
+            return `
+                <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-8 max-w-sm w-full text-center transform transition-all scale-100">
+                        <h2 class="text-4xl mb-2">🎉</h2>
+                        <h3 class="text-2xl font-bold text-gray-900 dark:text-white">Success!</h3>
+                        <p class="mt-2 text-gray-600 dark:text-gray-400">You've successfully completed "${exercise.title}". Great job!</p>
+                        <div class="mt-6 space-y-2">
+                             <button onclick="closeModalAndContinue(true)" class="w-full px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-semibold">Next Challenge</button>
+                             <button onclick="navigate('exercises')" class="w-full px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 font-semibold">Back to Exercises</button>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        const FooterComponent = () => `
+            <footer class="text-center py-8 mt-8 text-gray-500 dark:text-gray-400 text-sm">
+                <p>&copy; ${new Date().getFullYear()} CodeSprint. All rights reserved.</p>
+            </footer>
+        `;
+        
+        // --- RENDER LOGIC ---
+        const renderPage = () => {
+            switch (state.page) {
+                case 'dashboard': return DashboardComponent();
+                case 'exercises': return ExerciseListComponent();
+                case 'leaderboard': return LeaderboardComponent();
+                case 'editor': return EditorComponent();
+                default: return `<h1>404 - Page Not Found</h1>`;
+            }
+        };
+
+        const render = () => {
+            // Apply theme
+            if (state.theme === 'dark') {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+
+            const appEl = document.getElementById('app');
+            appEl.innerHTML = `
+                ${HeaderComponent()}
+                <main class="container mx-auto px-4 sm:px-6 lg:px-8 py-8 fade-in">
+                    ${renderPage()}
+                </main>
+                ${FooterComponent()}
+                ${SuccessModalComponent()}
+            `;
+        };
+        
+        // --- INITIALIZATION ---
+        const init = () => {
+            state.theme = getFromStorage('code-sprint-theme', 'dark');
+            state.userProgress = getFromStorage('code-sprint-progress', state.userProgress);
+            render();
+        };
+
+        init();
+    </script>
+</body>
+</html>
